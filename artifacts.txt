@@ -1,0 +1,382 @@
+# =========================================================
+#        إضافات التذكرة: سبب الإغلاق + التذكيرات
+# =========================================================
+
+class CloseTicketModal(discord.ui.Modal):
+    def __init__(self):
+        super().__init__(title="🔒 إغلاق التذكرة")
+
+        self.reason = discord.ui.TextInput(
+            label="سبب إغلاق التذكرة",
+            placeholder="اكتب سبب إغلاق التذكرة...",
+            required=True,
+            min_length=3,
+            max_length=500,
+            style=discord.TextStyle.paragraph
+        )
+
+        self.add_item(self.reason)
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        if not is_support_staff(interaction.user):
+            return await interaction.response.send_message(
+                "❌ هذا الزر مخصص للإدارة فقط.",
+                ephemeral=True
+            )
+
+        record = get_ticket_record(interaction.channel.id)
+
+        if not record:
+            return await interaction.response.send_message(
+                "❌ لم يتم العثور على بيانات هذه التذكرة.",
+                ephemeral=True
+            )
+
+        reason = self.reason.value
+
+        # تسجيل سبب الإغلاق في الـ Database
+        try:
+            cursor = db.cursor()
+
+            cursor.execute("""
+                UPDATE tickets
+                SET close_reason = ?,
+                    closed = 1,
+                    closed_at = ?
+                WHERE channel_id = ?
+            """, (
+                reason,
+                datetime.now(timezone.utc).isoformat(),
+                interaction.channel.id
+            ))
+
+            db.commit()
+
+        except Exception as e:
+            print(f"[CLOSE REASON ERROR] {e}")
+
+        # إرسال السبب في الـ Log
+        try:
+            log_channel = bot.get_channel(TICKET_LOG_CHANNEL_ID)
+
+            if log_channel:
+
+                embed = discord.Embed(
+                    title="🔴 إغلاق تذكرة",
+                    color=discord.Color.red(),
+                    timestamp=datetime.now(timezone.utc)
+                )
+
+                embed.add_field(
+                    name="🎫 التذكرة",
+                    value=interaction.channel.name,
+                    inline=True
+                )
+
+                embed.add_field(
+                    name="👤 العضو",
+                    value=f"<@{record['owner_id']}>",
+                    inline=True
+                )
+
+                embed.add_field(
+                    name="👨‍💼 الإداري",
+                    value=interaction.user.mention,
+                    inline=True
+                )
+
+                embed.add_field(
+                    name="📝 سبب الإغلاق",
+                    value=reason,
+                    inline=False
+                )
+
+                await log_channel.send(embed=embed)
+
+        except Exception as e:
+            print(f"[CLOSE LOG ERROR] {e}")
+
+        await interaction.response.send_message(
+            f"🔒 **تم إغلاق التذكرة**\n"
+            f"📝 السبب: {reason}\n\n"
+            "سيتم حذف التذكرة خلال 5 ثوانٍ.",
+            ephemeral=False
+        )
+
+        # إرسال تقييم إذا كان عندك نظام التقييم السابق
+        if record["staff_id"]:
+            try:
+                await send_rating_dm(
+                    record["owner_id"],
+                    record["staff_id"],
+                    interaction.channel.id,
+                    interaction.channel.name
+                )
+            except Exception as e:
+                print(f"[RATING ERROR] {e}")
+
+        await asyncio.sleep(5)
+
+        try:
+            await interaction.channel.delete(
+                reason=reason
+            )
+        except Exception as e:
+            print(f"[DELETE TICKET ERROR] {e}")
+
+
+class TicketControlView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    # =====================================================
+    #                  استلام التذكرة
+    # =====================================================
+
+    @discord.ui.button(
+        label="استلام التذكرة",
+        emoji="👨‍💼",
+        style=discord.ButtonStyle.primary,
+        custom_id="claim_ticket_btn"
+    )
+    async def claim_ticket(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if not is_support_staff(interaction.user):
+            return await interaction.response.send_message(
+                "❌ هذا الزر مخصص للإدارة فقط.",
+                ephemeral=True
+            )
+
+        record = get_ticket_record(
+            interaction.channel.id
+        )
+
+        if not record:
+            return await interaction.response.send_message(
+                "❌ لم يتم العثور على بيانات التذكرة.",
+                ephemeral=True
+            )
+
+        if record["staff_id"]:
+            return await interaction.response.send_message(
+                f"⚠️ التذكرة مستلمة بالفعل من "
+                f"<@{record['staff_id']}>.",
+                ephemeral=True
+            )
+
+        cursor = db.cursor()
+
+        cursor.execute("""
+            UPDATE tickets
+            SET staff_id = ?
+            WHERE channel_id = ?
+        """, (
+            interaction.user.id,
+            interaction.channel.id
+        ))
+
+        db.commit()
+
+        await interaction.response.send_message(
+            f"👨‍💼 تم استلام التذكرة بواسطة "
+            f"{interaction.user.mention}."
+        )
+
+    # =====================================================
+    #                    تذكير العضو
+    # =====================================================
+
+    @discord.ui.button(
+        label="تذكير العضو",
+        emoji="🔔",
+        style=discord.ButtonStyle.secondary,
+        custom_id="remind_member_btn"
+    )
+    async def remind_member(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if not is_support_staff(interaction.user):
+            return await interaction.response.send_message(
+                "❌ هذا الزر مخصص للإدارة فقط.",
+                ephemeral=True
+            )
+
+        record = get_ticket_record(
+            interaction.channel.id
+        )
+
+        if not record:
+            return await interaction.response.send_message(
+                "❌ لم يتم العثور على بيانات التذكرة.",
+                ephemeral=True
+            )
+
+        try:
+            member = await bot.fetch_user(
+                record["owner_id"]
+            )
+
+            embed = discord.Embed(
+                title="🔔 تذكير بتذكرتك",
+                description=(
+                    "مرحباً 👋\n\n"
+                    "لا تزال لديك **تذكرة مفتوحة** في السيرفر.\n\n"
+                    f"🎫 **التذكرة:** `{interaction.channel.name}`\n\n"
+                    "يرجى العودة إلى التذكرة والرد على "
+                    "فريق الدعم حتى نتمكن من مساعدتك."
+                ),
+                color=discord.Color.orange(),
+                timestamp=datetime.now(timezone.utc)
+            )
+
+            embed.set_footer(
+                text="LEON Support"
+            )
+
+            await member.send(
+                embed=embed
+            )
+
+            await interaction.response.send_message(
+                "✅ تم إرسال التذكير للعضو في الخاص.",
+                ephemeral=True
+            )
+
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "❌ لا يمكن إرسال رسالة خاصة للعضو.",
+                ephemeral=True
+            )
+
+        except Exception as e:
+            print(f"[REMIND MEMBER ERROR] {e}")
+
+            await interaction.response.send_message(
+                "❌ حدث خطأ أثناء إرسال التذكير.",
+                ephemeral=True
+            )
+
+    # =====================================================
+    #                  تذكير الإداري
+    # =====================================================
+
+    @discord.ui.button(
+        label="تذكير الإداري",
+        emoji="📢",
+        style=discord.ButtonStyle.secondary,
+        custom_id="remind_staff_btn"
+    )
+    async def remind_staff(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        record = get_ticket_record(
+            interaction.channel.id
+        )
+
+        if not record:
+            return await interaction.response.send_message(
+                "❌ لم يتم العثور على بيانات التذكرة.",
+                ephemeral=True
+            )
+
+        # فقط صاحب التذكرة يستطيع الضغط
+        if interaction.user.id != record["owner_id"]:
+            return await interaction.response.send_message(
+                "❌ هذا الزر مخصص لصاحب التذكرة.",
+                ephemeral=True
+            )
+
+        # إذا لم يستلمها إداري
+        if not record["staff_id"]:
+            return await interaction.response.send_message(
+                "⚠️ لم يستلم أي إداري التذكرة حتى الآن.",
+                ephemeral=True
+            )
+
+        try:
+
+            staff = await bot.fetch_user(
+                record["staff_id"]
+            )
+
+            embed = discord.Embed(
+                title="📢 تذكير بتذكرة مفتوحة",
+                description=(
+                    "مرحباً 👋\n\n"
+                    "لديك تذكرة مفتوحة لا تزال بحاجة إلى "
+                    "المتابعة.\n\n"
+                    f"🎫 **التذكرة:** `{interaction.channel.name}`\n\n"
+                    f"👤 **العضو:** {interaction.user.mention}\n\n"
+                    "يرجى العودة إلى التذكرة ومتابعة العضو."
+                ),
+                color=discord.Color.blurple(),
+                timestamp=datetime.now(timezone.utc)
+            )
+
+            embed.set_footer(
+                text="LEON Support"
+            )
+
+            await staff.send(
+                embed=embed
+            )
+
+            await interaction.response.send_message(
+                "✅ تم إرسال تذكير للإداري في الخاص.",
+                ephemeral=True
+            )
+
+        except discord.Forbidden:
+
+            await interaction.response.send_message(
+                "❌ لا يمكن إرسال رسالة خاصة للإداري.",
+                ephemeral=True
+            )
+
+        except Exception as e:
+
+            print(f"[REMIND STAFF ERROR] {e}")
+
+            await interaction.response.send_message(
+                "❌ حدث خطأ أثناء إرسال التذكير.",
+                ephemeral=True
+            )
+
+    # =====================================================
+    #                    إغلاق التذكرة
+    # =====================================================
+
+    @discord.ui.button(
+        label="إغلاق التذكرة",
+        emoji="🔒",
+        style=discord.ButtonStyle.danger,
+        custom_id="close_ticket_btn"
+    )
+    async def close_ticket_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if not is_support_staff(interaction.user):
+            return await interaction.response.send_message(
+                "❌ هذا الزر مخصص للإدارة فقط.",
+                ephemeral=True
+            )
+
+        # فتح نافذة كتابة سبب الإغلاق
+        await interaction.response.send_modal(
+            CloseTicketModal()
+        )
