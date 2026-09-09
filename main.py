@@ -19,9 +19,9 @@ from discord.ext import commands, tasks
 from flask import Flask
 from google import genai
 
-from .games import game_database, register_game_commands
-from .community_games import setup as register_community_games
-from .admin_points import (
+from games import game_database, register_game_commands
+from community_games import setup as register_community_games
+from admin_points import (
     is_supported_guild as is_admin_points_guild,
     register_ticket_points,
     is_current_admin as is_admin_points_member,
