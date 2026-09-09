@@ -77,16 +77,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 
 @bot.event
-async def setup_hook():
-    # تحميل موديول نقاط الإدارة كـ Extension
-    try:
-        await bot.load_extension("admin_points")
-        print("✅ Successfully loaded admin_points module.")
-    except Exception as e:
-        print(f"❌ [Admin Points Load Error]: {e}")
-
-
-@bot.event
 async def on_ready():
     # تسجيل أوامر الألعاب
     try:
@@ -97,10 +87,29 @@ async def on_ready():
     except Exception as e:
         print(f"❌ [Games Setup Error]: {e}")
 
-    # مزامنة جميع أوامر الـ Slash الشاملة مع ديسكورد
+    # تسجيل أوامر الإدارة مباشرة
+    try:
+        import admin_points
+
+        if hasattr(admin_points, "setup_admin_points"):
+            await admin_points.setup_admin_points(bot)
+            print("✅ Registered admin points function successfully.")
+        elif hasattr(admin_points, "setup"):
+            await admin_points.setup(bot)
+            print("✅ Registered admin points cog via setup successfully.")
+        else:
+            print("⚠️ Could not find setup entry in admin_points.py")
+    except Exception as e:
+        print(f"❌ [Admin Points Setup Error]: {e}")
+
+    # مزامنة الأوامر عالمياً وفي جميع السيرفرات
     try:
         synced = await bot.tree.sync()
-        print(f"✅ Successfully synced {len(synced)} command(s).")
+        print(f"✅ Successfully synced {len(synced)} global command(s).")
+
+        for guild in bot.guilds:
+            await bot.tree.sync(guild=guild)
+        print("✅ Successfully synced commands to all joined guilds.")
     except Exception as e:
         print(f"❌ Failed to sync commands: {e}")
 
