@@ -1,5 +1,9 @@
 import os
+import sqlite3
+import threading
+from pathlib import Path
 from threading import Thread
+
 import discord
 from discord.ext import commands
 from flask import Flask
@@ -10,7 +14,7 @@ app = Flask("")
 
 @app.route("/")
 def home():
-    return "Bot is alive!"
+    return "Bot is alive and running!"
 
 
 def run():
@@ -25,16 +29,86 @@ def keep_alive():
 
 keep_alive()
 
-# --- 2. كود البوت الخاص بك ---
+# --- 2. تهيئة قواعد البيانات التابعة للألعاب ونقاط الإدارة ---
+DATABASE_FILE = Path(__file__).resolve().parent / "leon_tickets.db"
+ADMIN_DB_FILE = Path(__file__).resolve().parent / "admin_points.db"
+
+
+class GameDatabase:
+
+    def __init__(self, path: Path) -> None:
+        self.connection = sqlite3.connect(path, check_same_thread=False)
+        self.connection.row_factory = sqlite3.Row
+        self.lock = threading.RLock()
+
+    def initialize(self) -> None:
+        with self.lock:
+            self.connection.execute(
+                """CREATE TABLE IF NOT EXISTS game_questions (
+                    id INTEGER PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    question TEXT NOT NULL,
+                    options TEXT NOT NULL,
+                    correct_index INTEGER NOT NULL
+                )"""
+            )
+            self.connection.execute(
+                """CREATE TABLE IF NOT EXISTS game_scores (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    game_type TEXT NOT NULL,
+                    score INTEGER NOT NULL,
+                    total INTEGER NOT NULL,
+                    played_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )"""
+            )
+            self.connection.commit()
+
+
+game_database = GameDatabase(DATABASE_FILE)
+game_database.initialize()
+
+# --- 3. إعدادات وقواعد البوت الرئيسية ---
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}")
+    # 1. إعداد وتسجيل أوامر الألعاب
+    try:
+        from games import register_game_commands
+
+        register_game_commands(bot)
+        print("✅ Registered game commands successfully.")
+    except Exception as e:
+        print(f"❌ [Games Setup Error]: {e}")
+
+    # 2. إعداد وتسجيل نظام نقاط الإدارة
+    try:
+        from admin_points import setup_admin_points
+
+        await setup_admin_points(bot)
+        print("✅ Registered admin points setup successfully.")
+    except Exception as e:
+        print(f"❌ [Admin Points Setup Error]: {e}")
+
+    # 3. مزامنة جميع أوامر الـ Slash مع سيرفرات الديسكورد
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ Successfully synced {len(synced)} command(s).")
+    except Exception as e:
+        print(f"❌ Failed to sync commands: {e}")
+
+    print(f"🤖 Logged in as {bot.user} ({bot.user.id})")
 
 
-bot.run(os.environ.get("DISCORD_TOKEN"))
+# --- 4. تشغيل البوت ---
+token = os.environ.get("DISCORD_TOKEN")
+if not token:
+    print("❌ ERROR: DISCORD_TOKEN variable is missing from Environment Variables!")
+else:
+    bot.run(token)
