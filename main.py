@@ -77,8 +77,18 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 
 @bot.event
+async def setup_hook():
+    # تحميل موديول نقاط الإدارة كـ Extension
+    try:
+        await bot.load_extension("admin_points")
+        print("✅ Successfully loaded admin_points module.")
+    except Exception as e:
+        print(f"❌ [Admin Points Load Error]: {e}")
+
+
+@bot.event
 async def on_ready():
-    # 1. إعداد وتسجيل أوامر الألعاب
+    # تسجيل أوامر الألعاب
     try:
         from games import register_game_commands
 
@@ -87,16 +97,7 @@ async def on_ready():
     except Exception as e:
         print(f"❌ [Games Setup Error]: {e}")
 
-    # 2. إعداد وتسجيل نظام نقاط الإدارة
-    try:
-        from admin_points import setup_admin_points
-
-        await setup_admin_points(bot)
-        print("✅ Registered admin points setup successfully.")
-    except Exception as e:
-        print(f"❌ [Admin Points Setup Error]: {e}")
-
-    # 3. مزامنة جميع أوامر الـ Slash مع سيرفرات الديسكورد
+    # مزامنة جميع أوامر الـ Slash الشاملة مع ديسكورد
     try:
         synced = await bot.tree.sync()
         print(f"✅ Successfully synced {len(synced)} command(s).")
