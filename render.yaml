@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: nexus-bot
+    runtime: node
+    plan: free
+    region: singapore
+
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/nexus-bot build
+
+    startCommand: pnpm --filter @workspace/nexus-bot start
+
+    healthCheckPath: /ping
+
+    autoDeployTrigger: commit
+
+    buildFilter:
+      paths:
+        - artifacts/nexus-bot/**
+        - pnpm-lock.yaml
+        - pnpm-workspace.yaml
+        - package.json
+        - render.yaml
+
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+
+      - key: DISCORD_CLIENT_ID
+        value: "1549843165928886333"
+
+      - key: NEXUS_DATABASE_PATH
+        value: "./data/nexus.sqlite"
